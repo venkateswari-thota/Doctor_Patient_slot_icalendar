@@ -1,26 +1,14 @@
 import os
-from fastapi import UploadFile
-from starlette.datastructures import Headers
-from io import BytesIO
-from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from pydantic import EmailStr
 from typing import List
 from dotenv import load_dotenv
 
 load_dotenv()
-
-# Gmail SMTP Configuration
-conf = ConnectionConfig(
-    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
-    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
-    MAIL_FROM=os.getenv("MAIL_FROM"),
-    MAIL_PORT=587,
-    MAIL_SERVER="smtp.gmail.com",
-    MAIL_STARTTLS=True,
-    MAIL_SSL_TLS=False,
-    USE_CREDENTIALS=True,
-    VALIDATE_CERTS=True
-)
 
 async def send_calendar_email(
     subject: str,
@@ -31,30 +19,60 @@ async def send_calendar_email(
     method: str = "REQUEST"
 ):
     """
-    Sends an email with an iCalendar attachment to the specified recipients.
+    Sends a NATIVE Calendar Invitation email.
+    Using multipart/alternative and specific headers for Outlook/Gmail auto-sync.
     """
-    # Create a file-like object for the attachment, with content-type in headers
-    # Including 'method' in the content-type is crucial for Outlook/Gmail UI
-    ics_file = UploadFile(
-        filename=filename, 
-        file=BytesIO(ics_content),
-        headers=Headers({"content-type": f"text/calendar; method={method}"})
-    )
+    username = os.getenv("MAIL_USERNAME")
+    password = os.getenv("MAIL_PASSWORD")
+    mail_from = os.getenv("MAIL_FROM")
+    smtp_server = "smtp.gmail.com"
+    smtp_port = 587
+
+    # Create the root message
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = subject
+    msg["From"] = mail_from
+    msg["To"] = ", ".join(recipients)
     
-    # We need to ensure the cursor is at the beginning
-    await ics_file.seek(0)
+    # CRITICAL: This header tells Outlook to treat it as a native appointment
+    msg["Content-Class"] = "urn:content-classes:calendarmessage"
 
-    message = MessageSchema(
-        subject=subject,
-        recipients=recipients,
-        body=body,
-        subtype=MessageType.html,
-        attachments=[ics_file]
-    )
+    # Create the alternative part for Body (HTML) and Calendar
+    msg_alt = MIMEMultipart("alternative")
+    msg.attach(msg_alt)
 
-    fm = FastMail(conf)
+    # 1. HTML Body
+    html_part = MIMEText(body, "html")
+    msg_alt.attach(html_part)
+
+    # 2. Native Calendar Part (The "Secret" for Auto-Add)
+    # This must have method=REQUEST/CANCEL in the content type
+    cal_part = MIMEText(ics_content.decode("utf-8"), "calendar")
+    cal_part.set_param("method", method)
+    cal_part.set_param("charset", "UTF-8")
+    del cal_part["Content-Transfer-Encoding"]
+    cal_part.add_header("Content-Transfer-Encoding", "8bit")
+    msg_alt.attach(cal_part)
+
+    # 3. Traditional Attachment (Backup for mobile/older clients)
+    attachment = MIMEBase("text", "calendar", name=filename)
+    attachment.set_payload(ics_content)
+    encoders.encode_base64(attachment)
+    attachment.add_header("Content-Disposition", f'attachment; filename="{filename}"')
+    attachment.add_header("Content-ID", f"<{filename}>")
+    attachment.set_param("method", method)
+    msg.attach(attachment)
+
+    # Send via SMTP
     try:
-        await fm.send_message(message)
-        print(f"EMAIL SENT: {subject} to {recipients}")
+        # Note: Using synchronous smtplib here for simplicity in construction, 
+        # but in a high-concurrency app, aiosmtplib is preferred.
+        # Given the task complexity, this ensures the MIME structure is perfect.
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(username, password)
+        server.sendmail(mail_from, recipients, msg.as_string())
+        server.quit()
+        print(f"EMAIL SENT (NATIVE INVITE): {subject} to {recipients}")
     except Exception as e:
         print(f"EMAIL ERROR: {str(e)}")
