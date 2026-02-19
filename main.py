@@ -170,16 +170,17 @@ async def cancel_slot(slot_id: str):
     # Reload to get updated sequence
     updated_slot = await db.slots.find_one({"_id": slot["_id"]})
 
-    # Generate Cancellation iCalendar as an "Update"
-    # Sending as REQUEST with STATUS:CANCELLED prevents Outlook from showing the "Remove" button
+    # Generate Cancellation iCalendar using METHOD:CANCEL
+    # This is the only way to avoid 'Conflict' errors in Google Calendar.
+    # While it may show a 'Remove' button in Outlook, it ensures the event is cleared correctly.
     cancel_ics = generate_appointment_ics(
         uid=slot["calendar_uid"],
-        summary=f"CANCELLED: {slot['slot_id']}",
-        description="This appointment has been cancelled. This slot is now free.",
+        summary=f"CANCELLED: Doctor Appointment - {slot['patient_id']}",
+        description=f"The appointment for {slot['patient_id']} has been cancelled. This slot is now free.",
         start_time=slot["start_time"],
         end_time=slot["end_time"],
         date_str=slot["date"],
-        method="REQUEST", # Maintain as update to avoid delete buttons
+        method="CANCEL", # Back to standard CANCEL for Google compatibility
         sequence=updated_slot["sequence"],
         status="CANCELLED",
         attendees=[slot["doctor_email"], slot["patient_email"]]
@@ -187,17 +188,17 @@ async def cancel_slot(slot_id: str):
 
     # Send Real Cancellation Email
     await send_calendar_email(
-        subject=f"Appointment Update: {slot['slot_id']} - CANCELLED",
+        subject=f"Appointment CANCELLED: {slot['slot_id']}",
         recipients=[slot["patient_email"], slot["doctor_email"]],
         body=(
             f"The appointment on {slot['date']} ({slot['slot_id']}) has been cancelled.\n"
-            "Your calendar has been updated to reflect this change.\n\n"
+            "Your calendar has been updated to reflect this cancellation.\n\n"
             "Best Regards,\n"
             "Hospital Appointment System"
         ),
         ics_content=cancel_ics,
         filename="cancellation.ics",
-        method="REQUEST" # Keep method consistent with ICS for Outlook processing
+        method="CANCEL" 
     )
     
     return {"message": "Appointment cancelled and slot is now free", "slot_id": slot["slot_id"]}
