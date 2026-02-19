@@ -170,35 +170,51 @@ async def cancel_slot(slot_id: str):
     # Reload to get updated sequence
     updated_slot = await db.slots.find_one({"_id": slot["_id"]})
 
-    # Generate Cancellation iCalendar using METHOD:CANCEL
-    # This is the only way to avoid 'Conflict' errors in Google Calendar.
-    # While it may show a 'Remove' button in Outlook, it ensures the event is cleared correctly.
-    cancel_ics = generate_appointment_ics(
-        uid=slot["calendar_uid"],
-        summary=f"CANCELLED: Doctor Appointment - {slot['patient_id']}",
-        description=f"The appointment for {slot['patient_id']} has been cancelled. This slot is now free.",
-        start_time=slot["start_time"],
-        end_time=slot["end_time"],
-        date_str=slot["date"],
-        method="CANCEL", # Back to standard CANCEL for Google compatibility
-        sequence=updated_slot["sequence"],
-        status="CANCELLED",
-        attendees=[slot["doctor_email"], slot["patient_email"]]
-    )
-
-    # Send Real Cancellation Email
-    await send_calendar_email(
-        subject=f"Appointment CANCELLED: {slot['slot_id']}",
-        recipients=[slot["patient_email"], slot["doctor_email"]],
-        body=(
-            f"The appointment on {slot['date']} ({slot['slot_id']}) has been cancelled.\n"
-            "Your calendar has been updated to reflect this cancellation.\n\n"
-            "Best Regards,\n"
-            "Hospital Appointment System"
-        ),
-        ics_content=cancel_ics,
-        filename="cancellation.ics",
-        method="CANCEL" 
-    )
+    # --- SMART DISPATCH LOGIC ---
+    # We send separate emails to Doctor and Patient to optimize for their specific providers.
     
-    return {"message": "Appointment cancelled and slot is now free", "slot_id": slot["slot_id"]}
+    recipients_data = [
+        {"email": slot["doctor_email"], "role": "Doctor"},
+        {"email": slot["patient_email"], "role": "Patient"}
+    ]
+
+    for recipient in recipients_data:
+        email_addr = recipient["email"].lower()
+        
+        # Detect Provider
+        is_gmail = "gmail.com" in email_addr
+        
+        # Tailor Logic: 
+        # Gmail needs METHOD:CANCEL to avoid conflict errors and sync perfectly.
+        # Outlook/Apple needs METHOD:REQUEST + STATUS:CANCELLED to avoid the 'Remove' button.
+        dispatch_method = "CANCEL" if is_gmail else "REQUEST"
+        
+        cancel_ics = generate_appointment_ics(
+            uid=slot["calendar_uid"],
+            summary=f"CANCELLED: Doctor Appointment - {slot['patient_id']}",
+            description=f"The appointment on {slot['date']} has been cancelled. This slot is now free.",
+            start_time=slot["start_time"],
+            end_time=slot["end_time"],
+            date_str=slot["date"],
+            method=dispatch_method,
+            sequence=updated_slot["sequence"],
+            status="CANCELLED",
+            attendees=[slot["doctor_email"], slot["patient_email"]]
+        )
+
+        await send_calendar_email(
+            subject=f"Appointment CANCELLED: {slot['slot_id']}",
+            recipients=[recipient["email"]],
+            body=(
+                f"Hello {recipient['role']},\n\n"
+                f"The appointment on {slot['date']} ({slot['slot_id']}) has been cancelled.\n"
+                "Your calendar has been updated to reflect this cancellation.\n\n"
+                "Best Regards,\n"
+                "Hospital Appointment System"
+            ),
+            ics_content=cancel_ics,
+            filename="cancellation.ics",
+            method=dispatch_method
+        )
+    
+    return {"message": "Appointment cancelled successfully with Multi-Platform Dispatch.", "slot_id": slot["slot_id"]}
