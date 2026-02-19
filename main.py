@@ -14,14 +14,28 @@ app = FastAPI(title="Doctor Appointment System")
 @app.post("/slots/create", response_model=dict)
 async def create_slot(slot: SlotCreate):
     """Manager endpoint to create a single free slot with auto-generated slot_id."""
-    # Check for time conflicts
-    existing = await db.slots.find_one({
+    # Strict Overlap Check
+    # A clash occurs if: NewStart < ExistingEnd AND ExistingStart < NewEnd
+    # For simplicity in this logic, we assume times are comparable strings "HH:MM"
+    
+    clash = await db.slots.find_one({
         "doctor_id": slot.doctor_id,
         "date": slot.date,
-        "start_time": slot.start_time
+        "$or": [
+            {
+                "$and": [
+                    {"start_time": {"$lt": slot.end_time}},
+                    {"end_time": {"$gt": slot.start_time}}
+                ]
+            }
+        ]
     })
-    if existing:
-        raise HTTPException(status_code=400, detail="Slot already exists at this time.")
+    
+    if clash:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Time Conflict: This doctor already has a slot from {clash['start_time']} to {clash['end_time']}."
+        )
     
     # Auto-generate slot_id (e.g., slot001)
     count = await db.slots.count_documents({})
