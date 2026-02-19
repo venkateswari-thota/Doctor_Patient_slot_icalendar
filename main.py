@@ -160,30 +160,33 @@ async def cancel_slot(slot_id: str):
         {"$set": {"status": "free", "patient_id": None, "patient_email": None, "calendar_uid": None}}
     )
 
-    # Generate Cancellation iCalendar
+    # Generate Cancellation iCalendar as an "Update"
+    # Sending as REQUEST with STATUS:CANCELLED prevents Outlook from showing the "Remove" button
     cancel_ics = generate_appointment_ics(
         uid=slot["calendar_uid"],
-        summary="CANCELLED: Doctor Appointment",
-        description="This appointment has been cancelled.",
+        summary=f"CANCELLED: {slot['slot_id']}",
+        description="This appointment has been cancelled. This slot is now free.",
         start_time=slot["start_time"],
         end_time=slot["end_time"],
         date_str=slot["date"],
-        method="CANCEL",
-        sequence=1
+        method="REQUEST", # Use UPDATE (REQUEST) instead of CANCEL
+        sequence=slot.get("sequence", 0) + 1,
+        status="CANCELLED" # Explicitly set status to reflect on the calendar grid
     )
 
     # Send Real Cancellation Email
     await send_calendar_email(
-        subject=f"Appointment Cancelled: {slot['slot_id']}",
+        subject=f"Appointment Update: {slot['slot_id']} - CANCELLED",
         recipients=[slot["patient_email"], slot["doctor_email"]],
         body=(
-            f"The appointment on {slot['date']} ({slot['slot_id']}) has been cancelled.\n\n"
+            f"The appointment on {slot['date']} ({slot['slot_id']}) has been cancelled.\n"
+            "Your calendar has been updated to reflect this change.\n\n"
             "Best Regards,\n"
             "Hospital Appointment System"
         ),
         ics_content=cancel_ics,
         filename="cancellation.ics",
-        method="CANCEL"
+        method="REQUEST" # Keep method consistent with ICS for Outlook processing
     )
     
     return {"message": "Appointment cancelled and slot is now free", "slot_id": slot["slot_id"]}

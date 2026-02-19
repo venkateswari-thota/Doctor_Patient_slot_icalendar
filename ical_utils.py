@@ -14,7 +14,8 @@ def generate_appointment_ics(
     end_time: str,    # "HH:MM:SS"
     date_str: str,     # "YYYY-MM-DD"
     method: str = "REQUEST",
-    sequence: int = 0
+    sequence: int = 0,
+    status: str = None
 ):
     cal = Calendar()
     cal.add('prodid', '-//Hospital//Appointment System//EN')
@@ -64,9 +65,12 @@ def generate_appointment_ics(
     event.add('dtstamp', datetime.now(pytz.utc))
     event.add('sequence', sequence)
     
-    if method == "CANCEL":
-        event.add('status', 'CANCELLED')
+    if status:
+        event.add('status', status)
+
+    if method == "CANCEL" or status == "CANCELLED":
         # No alarms for cancellation
+        pass
     else:
         # Add 30-minute reminder
         alarm30 = Alarm()
