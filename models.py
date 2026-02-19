@@ -19,6 +19,7 @@ class SlotInDB(SlotBase):
     patient_id: Optional[str] = None
     patient_email: Optional[str] = None
     calendar_uid: Optional[str] = None
+    sequence: int = 0
 
 class BookingRequest(BaseModel):
     patient_id: str

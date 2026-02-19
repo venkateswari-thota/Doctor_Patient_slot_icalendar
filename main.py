@@ -52,6 +52,7 @@ async def create_slot(slot: SlotCreate):
     new_slot["patient_id"] = None
     new_slot["patient_email"] = None
     new_slot["calendar_uid"] = None
+    new_slot["sequence"] = 0
     
     result = await db.slots.insert_one(new_slot)
     return {"message": "Slot created successfully", "id": str(result.inserted_id), "slot_id": slot_id}
@@ -94,7 +95,7 @@ async def book_slot(slot_id: str, request: BookingRequest):
 
     calendar_uid = f"{uuid.uuid4()}@hospital.com"
 
-    # Atomic update to prevent double booking
+    # Atomic update to prevent double booking and track sequence
     result = await db.slots.find_one_and_update(
         query,
         {
@@ -103,7 +104,8 @@ async def book_slot(slot_id: str, request: BookingRequest):
                 "patient_id": request.patient_id,
                 "patient_email": request.patient_email,
                 "calendar_uid": calendar_uid
-            }
+            },
+            "$inc": {"sequence": 1}
         },
         return_document=True
     )
@@ -118,7 +120,9 @@ async def book_slot(slot_id: str, request: BookingRequest):
         description="Medical checkup with the doctor.",
         start_time=result["start_time"],
         end_time=result["end_time"],
-        date_str=result["date"]
+        date_str=result["date"],
+        sequence=result["sequence"],
+        attendees=[result["doctor_email"], request.patient_email]
     )
     
     # Send Real Email
@@ -157,8 +161,14 @@ async def cancel_slot(slot_id: str):
 
     await db.slots.update_one(
         {"_id": slot["_id"]},
-        {"$set": {"status": "free", "patient_id": None, "patient_email": None, "calendar_uid": None}}
+        {
+            "$set": {"status": "free", "patient_id": None, "patient_email": None, "calendar_uid": None},
+            "$inc": {"sequence": 1}
+        }
     )
+    
+    # Reload to get updated sequence
+    updated_slot = await db.slots.find_one({"_id": slot["_id"]})
 
     # Generate Cancellation iCalendar as an "Update"
     # Sending as REQUEST with STATUS:CANCELLED prevents Outlook from showing the "Remove" button
@@ -169,9 +179,10 @@ async def cancel_slot(slot_id: str):
         start_time=slot["start_time"],
         end_time=slot["end_time"],
         date_str=slot["date"],
-        method="REQUEST", # Use UPDATE (REQUEST) instead of CANCEL
-        sequence=slot.get("sequence", 0) + 1,
-        status="CANCELLED" # Explicitly set status to reflect on the calendar grid
+        method="REQUEST", # Maintain as update to avoid delete buttons
+        sequence=updated_slot["sequence"],
+        status="CANCELLED",
+        attendees=[slot["doctor_email"], slot["patient_email"]]
     )
 
     # Send Real Cancellation Email

@@ -1,5 +1,6 @@
 import os
 from icalendar import Calendar, Event, Alarm, vCalAddress, vText
+from typing import List
 from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
@@ -15,7 +16,8 @@ def generate_appointment_ics(
     date_str: str,     # "YYYY-MM-DD"
     method: str = "REQUEST",
     sequence: int = 0,
-    status: str = None
+    status: str = None,
+    attendees: List[str] = None
 ):
     cal = Calendar()
     cal.add('prodid', '-//Hospital//Appointment System//EN')
@@ -65,6 +67,16 @@ def generate_appointment_ics(
     event.add('dtstamp', datetime.now(pytz.utc))
     event.add('sequence', sequence)
     
+    # Add Attendees (Crutial for Google Calendar auto-add/sync)
+    if attendees:
+        for email in attendees:
+            attendee = vCalAddress(f'MAILTO:{email}')
+            attendee.params['CUTYPE'] = vText('INDIVIDUAL')
+            attendee.params['ROLE'] = vText('REQ-PARTICIPANT')
+            attendee.params['PARTSTAT'] = vText('NEEDS-ACTION')
+            attendee.params['RSVP'] = vText('TRUE')
+            event.add('attendee', attendee, encode=0)
+
     if status:
         event.add('status', status)
 
