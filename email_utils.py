@@ -16,7 +16,11 @@ async def send_calendar_email(
     body: str,
     ics_content: bytes,
     filename: str = "invite.ics",
-    method: str = "REQUEST"
+    method: str = "REQUEST",
+    doctor_name: str = "Doctor",
+    appointment_id: str = "N/A",
+    start_time_iso: str = None,
+    end_time_iso: str = None
 ):
     """
     Sends a NATIVE Calendar Invitation email.
@@ -41,12 +45,47 @@ async def send_calendar_email(
     msg_alt = MIMEMultipart("alternative")
     msg.attach(msg_alt)
 
-    # 1. HTML Body
-    html_part = MIMEText(body, "html")
+    # 1. HTML Body + Schema.org Metadata (The Apple/Siri Secret)
+    schema_json = f"""
+    <script type="application/ld+json">
+    {{
+      "@context": "http://schema.org",
+      "@type": "Event",
+      "name": "{subject}",
+      "startDate": "{start_time_iso}",
+      "endDate": "{end_time_iso}",
+      "location": {{
+        "@type": "Place",
+        "name": "Hospital Clinic",
+        "address": {{
+          "@type": "PostalAddress",
+          "addressLocality": "Hyderabad",
+          "addressRegion": "TS",
+          "addressCountry": "IN"
+        }}
+      }},
+      "description": "{body}",
+      "performer": {{
+        "@type": "Person",
+        "name": "{doctor_name}"
+      }}
+    }}
+    </script>
+    """
+    
+    full_html = f"""
+    <html>
+      <body>
+        {body}
+        {schema_json if start_time_iso else ""}
+      </body>
+    </html>
+    """
+
+    html_part = MIMEText(full_html, "html")
     msg_alt.attach(html_part)
 
-    # 2. Native Calendar Part (The "Secret" for Auto-Add)
-    # This must have method=REQUEST/CANCEL in the content type
+    # 2. Native Calendar Part
     cal_part = MIMEText(ics_content.decode("utf-8"), "calendar")
     cal_part.set_param("method", method)
     cal_part.set_param("charset", "UTF-8")

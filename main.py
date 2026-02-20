@@ -125,19 +125,29 @@ async def book_slot(slot_id: str, request: BookingRequest):
         attendees=[result["doctor_email"], request.patient_email]
     )
     
+    # Prepare ISO format for Apple/Siri detection
+    # Format: YYYY-MM-DDTHH:MM:SS
+    # Assuming IST timezone (+05:30)
+    iso_start = f"{result['date']}T{result['start_time'].split('.')[0] if '.' in result['start_time'] else result['start_time']}+05:30"
+    iso_end = f"{result['date']}T{result['end_time'].split('.')[0] if '.' in result['end_time'] else result['end_time']}+05:30"
+
     # Send Real Email
     await send_calendar_email(
-        subject=f"Appointment Confirmation: Doctor & Patient ({slot_id})",
+        subject=f"Appointment Confirmation: {result['slot_id']}",
         recipients=[request.patient_email, result["doctor_email"]],
         body=(
-            f"Your appointment ({slot_id}) is confirmed for {result['date']} at {result['start_time']}.\n"
-            "Please add this appointment to your calendar.\n\n"
+            f"Your appointment ({result['slot_id']}) is confirmed for {result['date']} at {result['start_time']}.\n\n"
+            "This appointment has been automatically added to your calendar suggestions.\n\n"
             "Best Regards,\n"
             "Hospital Appointment System"
         ),
         ics_content=ics_content,
-        filename="appointment.ics",
-        method="REQUEST"
+        filename="invite.ics",
+        method="REQUEST",
+        doctor_name=result["doctor_email"], # Using email as name for now
+        appointment_id=result["slot_id"],
+        start_time_iso=iso_start,
+        end_time_iso=iso_end
     )
 
     return {
@@ -202,6 +212,10 @@ async def cancel_slot(slot_id: str):
             attendees=[slot["doctor_email"], slot["patient_email"]]
         )
 
+        # Prepare ISO for Apple/Siri
+        iso_start = f"{slot['date']}T{slot['start_time'].split('.')[0] if '.' in slot['start_time'] else slot['start_time']}+05:30"
+        iso_end = f"{slot['date']}T{slot['end_time'].split('.')[0] if '.' in slot['end_time'] else slot['end_time']}+05:30"
+
         await send_calendar_email(
             subject=f"Appointment CANCELLED: {slot['slot_id']}",
             recipients=[recipient["email"]],
@@ -214,7 +228,11 @@ async def cancel_slot(slot_id: str):
             ),
             ics_content=cancel_ics,
             filename="cancellation.ics",
-            method=dispatch_method
+            method=dispatch_method,
+            doctor_name=slot["doctor_email"],
+            appointment_id=slot["slot_id"],
+            start_time_iso=iso_start,
+            end_time_iso=iso_end
         )
     
     return {"message": "Appointment cancelled successfully with Multi-Platform Dispatch.", "slot_id": slot["slot_id"]}
